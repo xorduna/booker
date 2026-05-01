@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ticket-providers"
+version = "0.1.0"
+description = "Generic read-only ticket availability wrapper with multiple provider support"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.14.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ticket_providers"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

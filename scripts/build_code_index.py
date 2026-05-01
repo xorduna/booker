@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+Build a code index from documentation file metadata.
+
+Reads all Markdown files in the /docs folder, extracts YAML front-matter
+metadata, and writes a summary to docs/code-index.md.
+
+Usage
+-----
+    python scripts/build_code_index.py
+
+The script is safe to run repeatedly — it overwrites docs/code-index.md
+each time.
+"""
+
+import pathlib
+import re
+import sys
+
+
+REPOSITORY_ROOT_PATH = pathlib.Path(__file__).parent.parent
+DOCS_DIRECTORY_PATH = REPOSITORY_ROOT_PATH / "docs"
+CODE_INDEX_OUTPUT_PATH = DOCS_DIRECTORY_PATH / "code-index.md"
+
+FRONT_MATTER_PATTERN = re.compile(
+    r"^---\s*\n(.*?)\n---\s*\n",
+    re.DOTALL,
+)
+
+
+def extract_front_matter_block(markdown_content: str) -> str | None:
+    """Extract the raw YAML front-matter block from a Markdown file.
+
+    Args:
+        markdown_content: The full text content of a Markdown file.
+
+    Returns:
+        The YAML text between the `---` delimiters, or None if the file
+        has no front-matter block.
+    """
+    front_matter_match = FRONT_MATTER_PATTERN.match(markdown_content)
+    if front_matter_match is None:
+        return None
+    return front_matter_match.group(1)
+
+
+def parse_simple_yaml_scalar(
+    front_matter_block: str,
+    field_name: str,
+) -> str | None:
+    """Extract a simple scalar value from a YAML-like front-matter block.
+
+    This is a minimal parser for the subset of YAML used in the docs:
+    single-line values only.  It does not handle nested objects or
+    multi-line scalars beyond block scalars starting with `>`.
+
+    Args:
+        front_matter_block: The raw YAML text (without `---` delimiters).
+        field_name: The key to look up.
+
+    Returns:
+        The scalar string value, or None if the field is not found.
+    """
+    scalar_pattern = re.compile(
+        rf"^{re.escape(field_name)}:\s*(.+)$",
+        re.MULTILINE,
+    )
+    scalar_match = scalar_pattern.search(front_matter_block)
+    if scalar_match is None:
+        return None
+    raw_value = scalar_match.group(1).strip()
+    # Strip YAML block scalar indicator and inline whitespace
+    return raw_value.lstrip(">").strip()
+
+
+def parse_simple_yaml_list(
+    front_matter_block: str,
+    field_name: str,
+) -> list[str]:
+    """Extract a simple YAML list from a front-matter block.
+
+    Handles only the compact list syntax (items starting with `  - `).
+
+    Args:
+        front_matter_block: The raw YAML text.
+        field_name: The key to look up.
+
+    Returns:
+        A list of string values, or an empty list if not found.
+    """
+    list_block_pattern = re.compile(
+        rf"^{re.escape(field_name)}:\s*\n((?:[ \t]+-[^\n]*\n?)+)",
+        re.MULTILINE,
+    )
+    list_block_match = list_block_pattern.search(front_matter_block)
+    if list_block_match is None:
+        return []
+    list_block_text = list_block_match.group(1)
+    list_items = re.findall(r"[ \t]+-\s*(.+)", list_block_text)
+    return [item.strip() for item in list_items]
+
+
+def collect_doc_file_metadata(
+    docs_directory_path: pathlib.Path,
+) -> list[dict]:
+    """Scan the docs directory and extract metadata from each Markdown file.
+
+    Args:
+        docs_directory_path: Path to the docs directory.
+
+    Returns:
+        A list of metadata dicts, one per Markdown file (sorted by filename).
+    """
+    collected_metadata_list = []
+    markdown_file_paths = sorted(docs_directory_path.glob("*.md"))
+
+    for markdown_file_path in markdown_file_paths:
+        if markdown_file_path.name == "code-index.md":
+            # Skip the index itself
+            continue
+
+        markdown_file_content = markdown_file_path.read_text(encoding="utf-8")
+        front_matter_block = extract_front_matter_block(markdown_file_content)
+
+        if front_matter_block is None:
+            print(
+                f"  Warning: {markdown_file_path.name} has no front-matter block.",
+                file=sys.stderr,
+            )
+            continue
+
+        file_metadata = {
+            "filename": markdown_file_path.name,
+            "title": parse_simple_yaml_scalar(front_matter_block, "title"),
+            "description": parse_simple_yaml_scalar(front_matter_block, "description"),
+            "methods": parse_simple_yaml_list(front_matter_block, "methods"),
+            "depends_on": parse_simple_yaml_list(front_matter_block, "depends_on"),
+            "used_by": parse_simple_yaml_list(front_matter_block, "used_by"),
+        }
+        collected_metadata_list.append(file_metadata)
+
+    return collected_metadata_list
+
+
+def render_code_index_markdown(
+    all_file_metadata: list[dict],
+) -> str:
+    """Render the collected metadata as a Markdown code index document.
+
+    Args:
+        all_file_metadata: List of metadata dicts as returned by
+            collect_doc_file_metadata().
+
+    Returns:
+        The complete Markdown text for docs/code-index.md.
+    """
+    output_lines = [
+        "# Code Index",
+        "",
+        "Auto-generated by `scripts/build_code_index.py`. Do not edit manually.",
+        "",
+        f"Total documented files: {len(all_file_metadata)}",
+        "",
+        "---",
+        "",
+    ]
+
+    for file_metadata in all_file_metadata:
+        title_text = file_metadata.get("title") or file_metadata["filename"]
+        description_text = file_metadata.get("description") or "_No description._"
+        methods_list = file_metadata.get("methods") or []
+        depends_on_list = file_metadata.get("depends_on") or []
+        used_by_list = file_metadata.get("used_by") or []
+
+        output_lines.append(f"## [{title_text}]({file_metadata['filename']})")
+        output_lines.append("")
+        output_lines.append(description_text)
+        output_lines.append("")
+
+        if methods_list:
+            output_lines.append("**Methods / Actions:**")
+            for method_item in methods_list:
+                output_lines.append(f"- `{method_item}`")
+            output_lines.append("")
+
+        if depends_on_list:
+            output_lines.append("**Depends on:**")
+            for dependency_item in depends_on_list:
+                output_lines.append(f"- `{dependency_item}`")
+            output_lines.append("")
+
+        if used_by_list:
+            output_lines.append("**Used by:**")
+            for consumer_item in used_by_list:
+                output_lines.append(f"- `{consumer_item}`")
+            output_lines.append("")
+
+        output_lines.append("---")
+        output_lines.append("")
+
+    return "\n".join(output_lines)
+
+
+def main() -> None:
+    """Entry point: collect metadata and write docs/code-index.md."""
+    print(f"Scanning docs in: {DOCS_DIRECTORY_PATH}")
+    all_file_metadata = collect_doc_file_metadata(DOCS_DIRECTORY_PATH)
+
+    if not all_file_metadata:
+        print("No documented files found. Nothing to write.")
+        return
+
+    code_index_markdown_content = render_code_index_markdown(all_file_metadata)
+    CODE_INDEX_OUTPUT_PATH.write_text(code_index_markdown_content, encoding="utf-8")
+    print(f"Written: {CODE_INDEX_OUTPUT_PATH} ({len(all_file_metadata)} entries)")
+
+
+if __name__ == "__main__":
+    main()

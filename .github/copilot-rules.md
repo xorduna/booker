@@ -1,0 +1,1 @@
+Follow docs/agent-rules.md for general guidelines on coding and documentation. Additionally, ensure that all documentation files in the /docs folder include the specified metadata and that a script is in place to create and maintain a `code-index.md` file with this information. Use memory effectively to enhance user interactions and provide personalized responses.
